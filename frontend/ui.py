@@ -88,6 +88,89 @@ def render_model_info():
     st.markdown("</div>", unsafe_allow_html=True)
 
 
+def render_recent_history(records: list[dict]):
+    st.markdown('<div class="glass section-card">', unsafe_allow_html=True)
+    st.markdown('<p class="section-title">Recent Studies</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-subtitle">Recently saved local prediction summaries for quick follow-up review.</div>',
+        unsafe_allow_html=True,
+    )
+    if not records:
+        st.caption("No saved prediction history yet. Process a study to populate this section.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    history_df = pd.DataFrame(records).rename(
+        columns={
+            "saved_at": "Saved At",
+            "filename": "Filename",
+            "severity_band": "Severity",
+            "confidence_status": "Review Status",
+            "area_segmented_pct": "Area Segmented (%)",
+            "mean_confidence": "Mean Confidence",
+            "inference_time_ms": "Inference Time (ms)",
+            "clinical_summary": "Clinical Summary",
+        }
+    )
+    st.dataframe(history_df, use_container_width=True, hide_index=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_batch_queue(batch_rows: list[dict]):
+    st.markdown('<div class="glass section-card">', unsafe_allow_html=True)
+    st.markdown('<p class="section-title">Batch Queue Summary</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-subtitle">Summary of files processed in the current run.</div>',
+        unsafe_allow_html=True,
+    )
+    if not batch_rows:
+        st.caption("Batch summary will appear here when multiple studies are processed.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    queue_df = pd.DataFrame(batch_rows)
+    st.dataframe(queue_df, use_container_width=True, hide_index=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_safety_panel(safety_assessment: dict):
+    st.markdown('<div class="glass section-card">', unsafe_allow_html=True)
+    st.markdown('<p class="section-title">Safety Review</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-subtitle">Pre-inference image checks and stronger manual-review guidance.</div>',
+        unsafe_allow_html=True,
+    )
+
+    status = safety_assessment["status"]
+    reasons = safety_assessment["reasons"]
+    quality = safety_assessment["quality"]
+
+    if status == "Manual Review Required":
+        st.error(status)
+    elif status == "Manual Review Recommended":
+        st.warning(status)
+    else:
+        st.success(status)
+
+    if reasons:
+        st.write("Safety flags:")
+        for reason in reasons:
+            st.write(f"- {reason}")
+    else:
+        st.caption("No major image-quality or confidence safety flags were detected.")
+
+    quality_df = pd.DataFrame(
+        [
+            {"Metric": "Brightness", "Value": quality["brightness"]},
+            {"Metric": "Contrast", "Value": quality["contrast"]},
+            {"Metric": "Blur Variance", "Value": quality["blur_variance"]},
+            {"Metric": "Aspect Ratio", "Value": quality["aspect_ratio"]},
+        ]
+    )
+    st.dataframe(quality_df, use_container_width=True, hide_index=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 def build_attributes(filename, payload, width, height, area_pct, mean_conf, std_conf, threshold):
     severity = classify_severity(area_pct)
     confidence_label, confidence_note = classify_confidence(mean_conf, std_conf)

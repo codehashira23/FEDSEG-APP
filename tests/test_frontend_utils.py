@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import base64
 
 import cv2
@@ -5,7 +7,9 @@ import numpy as np
 
 from frontend.api_client import decode_mask_png_base64, parse_mask_payload
 from frontend.clinical import build_clinical_summary, build_report_text, classify_confidence, classify_severity
+from frontend.history import build_batch_row, load_recent_history, make_study_id, save_history_record
 from frontend.image_utils import make_comparison_split, make_overlay, mask_to_rgb
+from frontend.safety import assess_image_quality, build_safety_assessment
 
 
 def test_decode_mask_png_base64_round_trip():
@@ -82,6 +86,73 @@ def test_report_text_contains_core_doctor_facing_fields():
     assert "Severity Band: Moderate" in report
     assert "Confidence Status: Review Recommended" in report
     assert "Disclaimer:" in report
+
+
+def test_history_save_and_load_returns_latest_records(tmp_path: Path):
+    attrs = {
+        "Filename": "scan-01.png",
+        "Severity band": "Moderate",
+        "Confidence status": "Review Recommended",
+        "Area segmented (%)": 22.5,
+        "Mean confidence": 0.61,
+        "Inference time (ms)": 38.2,
+        "Clinical summary": "Estimated segmented involvement is 22.5% of the image.",
+    }
+    save_history_record("study-a", attrs, tmp_path)
+    attrs["Filename"] = "scan-02.png"
+    save_history_record("study-b", attrs, tmp_path)
+
+    records = load_recent_history(limit=2, base_dir=tmp_path)
+
+    assert len(records) == 2
+    filenames = {record["filename"] for record in records}
+    assert filenames == {"scan-01.png", "scan-02.png"}
+
+
+def test_make_study_id_is_stable():
+    payload = b"sample-bytes"
+    assert make_study_id(payload) == make_study_id(payload)
+
+
+def test_build_batch_row_extracts_queue_fields():
+    attrs = {
+        "Severity band": "Mild",
+        "Confidence status": "High Confidence",
+        "Area segmented (%)": 12.4,
+        "Mean confidence": 0.78,
+        "Inference time (ms)": 41.2,
+    }
+
+    row = build_batch_row("scan.png", attrs)
+
+    assert row["Filename"] == "scan.png"
+    assert row["Status"] == "Completed"
+    assert row["Severity"] == "Mild"
+
+
+def test_assess_image_quality_flags_dark_blurry_images():
+    image = np.zeros((32, 32, 3), dtype=np.uint8)
+
+    quality = assess_image_quality(image)
+
+    assert quality["overall"] in {"review", "high_risk"}
+    assert quality["issues"]
+
+
+def test_build_safety_assessment_escalates_manual_review():
+    quality = {
+        "brightness": 10.0,
+        "contrast": 5.0,
+        "blur_variance": 1.0,
+        "aspect_ratio": 1.0,
+        "issues": ["Image is very dark", "Image appears blurry"],
+        "overall": "review",
+    }
+
+    assessment = build_safety_assessment(quality, mean_conf=0.25, std_conf=0.31)
+
+    assert assessment["status"] == "Manual Review Required"
+    assert "Model confidence is very low" in assessment["reasons"]
 
 
 def test_overlay_and_split_preserve_shape():

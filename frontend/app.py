@@ -15,18 +15,40 @@ try:
     from frontend.api_client import check_backend_health, parse_mask_payload, request_prediction
     from frontend.clinical import classify_confidence, classify_severity
     from frontend.config import DEFAULT_API_URL
+    from frontend.history import build_batch_row, load_recent_history, make_study_id, save_history_record
     from frontend.image_utils import decode_uploaded_image, make_comparison_split, make_overlay, mask_to_rgb
+    from frontend.safety import assess_image_quality, build_safety_assessment
     from frontend.styles import inject_styles
-    from frontend.ui import build_attributes, render_empty_state, render_model_info, render_results, render_topbar
+    from frontend.ui import (
+        build_attributes,
+        render_batch_queue,
+        render_empty_state,
+        render_model_info,
+        render_recent_history,
+        render_results,
+        render_safety_panel,
+        render_topbar,
+    )
     from shared.api_contract import PREDICT_PATH
 except ModuleNotFoundError:
     # Fallback for environments where Streamlit runs this file without repo root on sys.path.
     from api_client import check_backend_health, parse_mask_payload, request_prediction
     from clinical import classify_confidence, classify_severity
     from config import DEFAULT_API_URL
+    from history import build_batch_row, load_recent_history, make_study_id, save_history_record
     from image_utils import decode_uploaded_image, make_comparison_split, make_overlay, mask_to_rgb
+    from safety import assess_image_quality, build_safety_assessment
     from styles import inject_styles
-    from ui import build_attributes, render_empty_state, render_model_info, render_results, render_topbar
+    from ui import (
+        build_attributes,
+        render_batch_queue,
+        render_empty_state,
+        render_model_info,
+        render_recent_history,
+        render_results,
+        render_safety_panel,
+        render_topbar,
+    )
     PREDICT_PATH = "/predict"
 
 st.set_page_config(
@@ -108,78 +130,30 @@ def render_upload():
         '<div class="upload-hint">Recommended: frontal chest X-ray PNG or JPEG for best visual consistency.</div>',
         unsafe_allow_html=True,
     )
-    uploaded_file = st.file_uploader(
+    uploaded_files = st.file_uploader(
         "Upload image",
         type=["png", "jpg", "jpeg"],
-        accept_multiple_files=False,
+        accept_multiple_files=True,
         label_visibility="collapsed",
     )
     st.markdown("</div>", unsafe_allow_html=True)
-    return uploaded_file
+    return uploaded_files
 
 
-def main():
-    inject_styles()
-    controls = render_sidebar()
-
-    backend_ok = check_backend_health(controls["api_base"])
-    render_topbar(backend_ok)
-
-    uploaded_file = render_upload()
-    if uploaded_file is None:
-        render_empty_state()
-        render_model_info()
-        st.stop()
-
+def process_uploaded_file(uploaded_file, controls):
     file_bytes = uploaded_file.read()
     decoded = decode_uploaded_image(file_bytes)
     if decoded is None:
-        st.markdown('<div class="glass section-card">', unsafe_allow_html=True)
-        st.error("Could not decode image. Please upload a valid PNG or JPEG file.")
-        st.markdown("</div>", unsafe_allow_html=True)
-        render_model_info()
-        st.stop()
+        raise ValueError("Could not decode image. Please upload a valid PNG or JPEG file.")
+    quality_assessment = assess_image_quality(decoded)
 
     original_rgb = cv2.cvtColor(decoded, cv2.COLOR_BGR2RGB)
     h_orig, w_orig = original_rgb.shape[:2]
     filename = uploaded_file.name or "image.png"
-
-    st.markdown('<div class="glass section-card">', unsafe_allow_html=True)
-    st.markdown('<p class="section-title">Inference</p>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="section-subtitle">Model is processing the uploaded image and generating confidence mask.</div>',
-        unsafe_allow_html=True,
-    )
-    progress = st.progress(8, text="Preparing request...")
-
-    try:
-        progress.progress(30, text="Sending image to inference service...")
-        with st.spinner("Running segmentation model..."):
-            payload = request_prediction(controls["api_base"].rstrip("/") + PREDICT_PATH, file_bytes)
-        progress.progress(100, text="Inference complete")
-    except requests.exceptions.RequestException as exc:
-        st.error(f"API error: {exc}")
-        if hasattr(exc, "response") and exc.response is not None:
-            try:
-                st.json(exc.response.json())
-            except Exception:
-                st.code(exc.response.text)
-        st.markdown("</div>", unsafe_allow_html=True)
-        render_model_info()
-        st.stop()
-
-    try:
-        mask = parse_mask_payload(payload)
-    except (KeyError, ValueError) as exc:
-        st.error(f"Invalid model response: {exc}")
-        st.markdown("</div>", unsafe_allow_html=True)
-        render_model_info()
-        st.stop()
-
-    st.success("Segmentation completed successfully.")
-    st.markdown("</div>", unsafe_allow_html=True)
-
+    payload = request_prediction(controls["api_base"].rstrip("/") + PREDICT_PATH, file_bytes)
+    mask = parse_mask_payload(payload)
     mask_resized = cv2.resize(mask, (w_orig, h_orig), interpolation=cv2.INTER_LINEAR)
+
     area_pct = 100.0 * (mask_resized > controls["threshold"]).sum() / (mask_resized.size or 1)
     mean_conf = float(np.mean(mask_resized))
     std_conf = float(np.std(mask_resized))
@@ -213,13 +187,87 @@ def main():
     )
     attributes["Severity band"] = severity
     attributes["Confidence status"] = confidence_status
+    safety_assessment = build_safety_assessment(quality_assessment, mean_conf, std_conf)
+    attributes["Safety status"] = safety_assessment["status"]
+    attributes["Safety reasons"] = "; ".join(safety_assessment["reasons"]) if safety_assessment["reasons"] else "None"
+
+    return {
+        "file_bytes": file_bytes,
+        "original_rgb": original_rgb,
+        "mask_rgb": mask_rgb,
+        "overlay": overlay,
+        "compare_view": compare_view,
+        "mask_resized": mask_resized,
+        "attributes": attributes,
+        "filename": filename,
+        "safety_assessment": safety_assessment,
+    }
+
+
+def main():
+    inject_styles()
+    controls = render_sidebar()
+
+    backend_ok = check_backend_health(controls["api_base"])
+    render_topbar(backend_ok)
+    render_recent_history(load_recent_history())
+
+    uploaded_files = render_upload()
+    if not uploaded_files:
+        render_empty_state()
+        render_model_info()
+        st.stop()
+
+    st.markdown('<div class="glass section-card">', unsafe_allow_html=True)
+    st.markdown('<p class="section-title">Inference</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-subtitle">Model is processing the uploaded image set and generating confidence masks.</div>',
+        unsafe_allow_html=True,
+    )
+    progress = st.progress(8, text="Preparing request...")
+    processed = []
+    batch_rows = []
+
+    try:
+        with st.spinner("Running segmentation model..."):
+            total_files = len(uploaded_files)
+            for index, uploaded_file in enumerate(uploaded_files, start=1):
+                progress_value = int(10 + ((index - 1) / max(total_files, 1)) * 80)
+                progress.progress(progress_value, text=f"Processing {uploaded_file.name} ({index}/{total_files})...")
+                result = process_uploaded_file(uploaded_file, controls)
+                processed.append(result)
+                study_id = make_study_id(result["file_bytes"])
+                save_history_record(study_id, result["attributes"])
+                batch_rows.append(build_batch_row(result["filename"], result["attributes"]))
+        progress.progress(100, text="Inference complete")
+    except requests.exceptions.RequestException as exc:
+        st.error(f"API error: {exc}")
+        if hasattr(exc, "response") and exc.response is not None:
+            try:
+                st.json(exc.response.json())
+            except Exception:
+                st.code(exc.response.text)
+        st.markdown("</div>", unsafe_allow_html=True)
+        render_model_info()
+        st.stop()
+    except ValueError as exc:
+        st.error(str(exc))
+        st.markdown("</div>", unsafe_allow_html=True)
+        render_model_info()
+        st.stop()
+
+    st.success("Segmentation completed successfully.")
+    st.markdown("</div>", unsafe_allow_html=True)
+    render_batch_queue(batch_rows)
+    primary = processed[0]
+    render_safety_panel(primary["safety_assessment"])
     render_results(
-        original_rgb,
-        mask_rgb,
-        overlay,
-        compare_view,
-        mask_resized,
-        attributes,
+        primary["original_rgb"],
+        primary["mask_rgb"],
+        primary["overlay"],
+        primary["compare_view"],
+        primary["mask_resized"],
+        primary["attributes"],
         controls["threshold"],
         controls["show_3d"],
     )
