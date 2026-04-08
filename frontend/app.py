@@ -1,21 +1,33 @@
+from pathlib import Path
+import sys
+
 import cv2
 import numpy as np
 import requests
 import streamlit as st
 
+# Ensure repo root is importable even when Streamlit runs this script from frontend/.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 try:
-    from frontend.api_client import check_backend_health, decode_mask_png_base64, request_prediction
+    from frontend.api_client import check_backend_health, parse_mask_payload, request_prediction
+    from frontend.clinical import classify_confidence, classify_severity
     from frontend.config import DEFAULT_API_URL
     from frontend.image_utils import decode_uploaded_image, make_comparison_split, make_overlay, mask_to_rgb
     from frontend.styles import inject_styles
     from frontend.ui import build_attributes, render_empty_state, render_model_info, render_results, render_topbar
+    from shared.api_contract import PREDICT_PATH
 except ModuleNotFoundError:
     # Fallback for environments where Streamlit runs this file without repo root on sys.path.
-    from api_client import check_backend_health, decode_mask_png_base64, request_prediction
+    from api_client import check_backend_health, parse_mask_payload, request_prediction
+    from clinical import classify_confidence, classify_severity
     from config import DEFAULT_API_URL
     from image_utils import decode_uploaded_image, make_comparison_split, make_overlay, mask_to_rgb
     from styles import inject_styles
     from ui import build_attributes, render_empty_state, render_model_info, render_results, render_topbar
+    PREDICT_PATH = "/predict"
 
 st.set_page_config(
     page_title="FEDSEG AI Dashboard",
@@ -143,7 +155,7 @@ def main():
     try:
         progress.progress(30, text="Sending image to inference service...")
         with st.spinner("Running segmentation model..."):
-            payload = request_prediction(controls["api_base"].rstrip("/") + "/predict", file_bytes)
+            payload = request_prediction(controls["api_base"].rstrip("/") + PREDICT_PATH, file_bytes)
         progress.progress(100, text="Inference complete")
     except requests.exceptions.RequestException as exc:
         st.error(f"API error: {exc}")
@@ -157,7 +169,7 @@ def main():
         st.stop()
 
     try:
-        mask = decode_mask_png_base64(payload["mask_png_base64"])
+        mask = parse_mask_payload(payload)
     except (KeyError, ValueError) as exc:
         st.error(f"Invalid model response: {exc}")
         st.markdown("</div>", unsafe_allow_html=True)
@@ -171,6 +183,8 @@ def main():
     area_pct = 100.0 * (mask_resized > controls["threshold"]).sum() / (mask_resized.size or 1)
     mean_conf = float(np.mean(mask_resized))
     std_conf = float(np.std(mask_resized))
+    severity = classify_severity(area_pct)
+    confidence_status, _ = classify_confidence(mean_conf, std_conf)
 
     mask_rgb = mask_to_rgb(mask_resized, controls["colormap"])
     tone_map = {
@@ -197,6 +211,8 @@ def main():
         std_conf,
         controls["threshold"],
     )
+    attributes["Severity band"] = severity
+    attributes["Confidence status"] = confidence_status
     render_results(
         original_rgb,
         mask_rgb,

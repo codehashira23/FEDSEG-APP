@@ -4,6 +4,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from frontend.clinical import build_clinical_summary, build_report_text, classify_confidence, classify_severity
+
 
 def render_topbar(backend_ok: bool):
     status_color = "#10b981" if backend_ok else "#ef4444"
@@ -87,12 +89,18 @@ def render_model_info():
 
 
 def build_attributes(filename, payload, width, height, area_pct, mean_conf, std_conf, threshold):
+    severity = classify_severity(area_pct)
+    confidence_label, confidence_note = classify_confidence(mean_conf, std_conf)
     return {
         "Filename": filename,
         "Image width (px)": payload.get("image_width", width),
         "Image height (px)": payload.get("image_height", height),
         "Area segmented (%)": round(area_pct, 2),
+        "Severity band": severity,
         "Mean confidence": round(mean_conf, 4),
+        "Confidence status": confidence_label,
+        "Clinical summary": build_clinical_summary(area_pct, severity, confidence_label),
+        "Review note": confidence_note,
         "Std confidence": round(std_conf, 4),
         "Mask min": round(payload.get("mask_min", 0.0), 4),
         "Mask max": round(payload.get("mask_max", 1.0), 4),
@@ -107,6 +115,9 @@ def render_results(original_rgb, mask_rgb, overlay, compare_view, mask_resized, 
     area_pct = attributes["Area segmented (%)"]
     mean_conf = attributes["Mean confidence"]
     inf_ms = attributes["Inference time (ms)"]
+    severity = attributes["Severity band"]
+    confidence_status = attributes["Confidence status"]
+    review_note = attributes["Review note"]
     foreground_pixels = int((mask_resized > threshold).sum())
     total_pixels = int(mask_resized.size)
     height, width = original_rgb.shape[:2]
@@ -117,6 +128,22 @@ def render_results(original_rgb, mask_rgb, overlay, compare_view, mask_resized, 
         '<div class="section-subtitle">Key outputs and confidence indicators for current image.</div>',
         unsafe_allow_html=True,
     )
+
+    if confidence_status == "Needs Manual Review":
+        st.warning(f"{confidence_status}: {review_note}")
+    elif confidence_status == "Review Recommended":
+        st.info(f"{confidence_status}: {review_note}")
+    else:
+        st.success(f"{confidence_status}: {review_note}")
+
+    st.markdown("### Clinical Snapshot")
+    c1, c2 = st.columns(2)
+    with c1:
+        render_metric_card("Severity Band", severity)
+    with c2:
+        render_metric_card("Review Status", confidence_status)
+
+    st.caption(attributes["Clinical summary"])
 
     m1, m2, m3, m4 = st.columns(4)
     with m1:
@@ -182,7 +209,8 @@ def render_results(original_rgb, mask_rgb, overlay, compare_view, mask_resized, 
         st.image(compare_view, use_container_width=True)
 
         st.markdown("### Export")
-        d1, d2, d3 = st.columns(3)
+        report_text = build_report_text(attributes)
+        d1, d2, d3, d4 = st.columns(4)
         with d1:
             st.markdown('<div class="download-card">', unsafe_allow_html=True)
             mask_uint8 = (np.clip(mask_resized, 0, 1) * 255).astype(np.uint8)
@@ -218,6 +246,19 @@ def render_results(original_rgb, mask_rgb, overlay, compare_view, mask_resized, 
                 use_container_width=True,
             )
             st.markdown("</div>", unsafe_allow_html=True)
+        with d4:
+            st.markdown('<div class="download-card">', unsafe_allow_html=True)
+            st.download_button(
+                "Download Report TXT",
+                data=report_text,
+                file_name="clinical-summary.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown("### Report Preview")
+        st.code(report_text, language="text")
 
     with tab_analytics:
         st.markdown("### Confidence Analytics")

@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field
 
+from shared.api_contract import MASK_ENCODING_PNG_BASE64
+
 
 class HealthResponse(BaseModel):
     status: str = Field(..., examples=["ok"])
@@ -16,4 +18,4 @@ class PredictResponse(BaseModel):
     mask_min: float
     mask_max: float
     mask_png_base64: str = Field(..., description="PNG-encoded grayscale mask as a base64 string.")
-    mask_encoding: str = Field(default="png_base64")
+    mask_encoding: str = Field(default=MASK_ENCODING_PNG_BASE64)

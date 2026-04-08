@@ -9,13 +9,14 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from backend.config import settings
 from backend.schemas import HealthResponse, PredictResponse
 from model.infer import predict
+from shared.api_contract import HEALTH_PATH, PREDICT_PATH, SUPPORTED_IMAGE_TYPES
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title=settings.app_name, version=settings.app_version)
 
 
-@app.get("/health", response_model=HealthResponse)
+@app.get(HEALTH_PATH, response_model=HealthResponse)
 def health() -> HealthResponse:
     return HealthResponse(
         status="ok",
@@ -33,7 +34,7 @@ def _validate_upload(file: UploadFile, contents: bytes) -> None:
             detail=f"Uploaded file exceeds {settings.max_upload_size_bytes} bytes.",
         )
     content_type = (file.content_type or "").lower()
-    if content_type and content_type not in {"image/png", "image/jpeg", "image/jpg"}:
+    if content_type and content_type not in SUPPORTED_IMAGE_TYPES:
         raise HTTPException(
             status_code=400,
             detail="Unsupported file type. Use a PNG or JPEG image.",
@@ -48,7 +49,7 @@ def _encode_mask_png(mask: np.ndarray) -> str:
     return base64.b64encode(buffer.tobytes()).decode("ascii")
 
 
-@app.post("/predict", response_model=PredictResponse)
+@app.post(PREDICT_PATH, response_model=PredictResponse)
 async def predict_api(file: UploadFile = File(...)) -> PredictResponse:
     contents = await file.read()
     _validate_upload(file, contents)
