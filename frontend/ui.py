@@ -116,6 +116,35 @@ def render_recent_history(records: list[dict]):
     st.markdown("</div>", unsafe_allow_html=True)
 
 
+def render_recent_feedback(records: list[dict]):
+    st.markdown('<div class="glass section-card">', unsafe_allow_html=True)
+    st.markdown('<p class="section-title">Recent Feedback</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-subtitle">Most recent clinician review decisions saved from this workstation.</div>',
+        unsafe_allow_html=True,
+    )
+    if not records:
+        st.caption("No feedback has been saved yet.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    feedback_df = pd.DataFrame(records).rename(
+        columns={
+            "saved_at": "Saved At",
+            "filename": "Filename",
+            "review_decision": "Decision",
+            "corrected_threshold": "Corrected Threshold",
+            "severity_band": "Severity",
+            "confidence_status": "Confidence Status",
+            "safety_status": "Safety Status",
+            "area_segmented_pct": "Area Segmented (%)",
+            "notes": "Notes",
+        }
+    )
+    st.dataframe(feedback_df, use_container_width=True, hide_index=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 def render_batch_queue(batch_rows: list[dict]):
     st.markdown('<div class="glass section-card">', unsafe_allow_html=True)
     st.markdown('<p class="section-title">Batch Queue Summary</p>', unsafe_allow_html=True)
@@ -169,6 +198,44 @@ def render_safety_panel(safety_assessment: dict):
     )
     st.dataframe(quality_df, use_container_width=True, hide_index=True)
     st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_feedback_panel(study_id: str, filename: str, threshold: float):
+    st.markdown('<div class="glass section-card">', unsafe_allow_html=True)
+    st.markdown('<p class="section-title">Clinician Review</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-subtitle">Capture acceptance, threshold correction, and review notes for this study.</div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.form(key=f"feedback_form_{study_id}"):
+        review_decision = st.radio(
+            "Review decision",
+            ["Accepted", "Accepted with threshold adjustment", "Needs correction", "Rejected"],
+            horizontal=True,
+        )
+        corrected_threshold = st.slider(
+            "Corrected threshold",
+            min_value=0.20,
+            max_value=0.80,
+            value=float(threshold),
+            step=0.05,
+            help=f"Current threshold for {filename} is {threshold:.2f}. Save an adjusted threshold if needed.",
+        )
+        notes = st.text_area(
+            "Review notes",
+            placeholder="Example: Overlay acceptable but lower right region should be tighter.",
+            height=100,
+        )
+        submitted = st.form_submit_button("Save Feedback", use_container_width=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+    return {
+        "submitted": submitted,
+        "review_decision": review_decision,
+        "corrected_threshold": corrected_threshold,
+        "notes": notes,
+    }
 
 
 def build_attributes(filename, payload, width, height, area_pct, mean_conf, std_conf, threshold):

@@ -15,6 +15,7 @@ try:
     from frontend.api_client import check_backend_health, parse_mask_payload, request_prediction
     from frontend.clinical import classify_confidence, classify_severity
     from frontend.config import DEFAULT_API_URL
+    from frontend.feedback import load_recent_feedback, save_feedback_record
     from frontend.history import build_batch_row, load_recent_history, make_study_id, save_history_record
     from frontend.image_utils import decode_uploaded_image, make_comparison_split, make_overlay, mask_to_rgb
     from frontend.safety import assess_image_quality, build_safety_assessment
@@ -23,7 +24,9 @@ try:
         build_attributes,
         render_batch_queue,
         render_empty_state,
+        render_feedback_panel,
         render_model_info,
+        render_recent_feedback,
         render_recent_history,
         render_results,
         render_safety_panel,
@@ -35,6 +38,7 @@ except ModuleNotFoundError:
     from api_client import check_backend_health, parse_mask_payload, request_prediction
     from clinical import classify_confidence, classify_severity
     from config import DEFAULT_API_URL
+    from feedback import load_recent_feedback, save_feedback_record
     from history import build_batch_row, load_recent_history, make_study_id, save_history_record
     from image_utils import decode_uploaded_image, make_comparison_split, make_overlay, mask_to_rgb
     from safety import assess_image_quality, build_safety_assessment
@@ -43,7 +47,9 @@ except ModuleNotFoundError:
         build_attributes,
         render_batch_queue,
         render_empty_state,
+        render_feedback_panel,
         render_model_info,
+        render_recent_feedback,
         render_recent_history,
         render_results,
         render_safety_panel,
@@ -211,6 +217,7 @@ def main():
     backend_ok = check_backend_health(controls["api_base"])
     render_topbar(backend_ok)
     render_recent_history(load_recent_history())
+    render_recent_feedback(load_recent_feedback())
 
     uploaded_files = render_upload()
     if not uploaded_files:
@@ -261,6 +268,17 @@ def main():
     render_batch_queue(batch_rows)
     primary = processed[0]
     render_safety_panel(primary["safety_assessment"])
+    primary_study_id = make_study_id(primary["file_bytes"])
+    feedback_state = render_feedback_panel(primary_study_id, primary["filename"], controls["threshold"])
+    if feedback_state["submitted"]:
+        save_feedback_record(
+            primary_study_id,
+            primary["attributes"],
+            feedback_state["review_decision"],
+            feedback_state["corrected_threshold"],
+            feedback_state["notes"],
+        )
+        st.success("Clinician feedback saved.")
     render_results(
         primary["original_rgb"],
         primary["mask_rgb"],

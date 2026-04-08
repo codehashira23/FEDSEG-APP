@@ -7,6 +7,7 @@ import numpy as np
 
 from frontend.api_client import decode_mask_png_base64, parse_mask_payload
 from frontend.clinical import build_clinical_summary, build_report_text, classify_confidence, classify_severity
+from frontend.feedback import build_feedback_record, load_recent_feedback, save_feedback_record
 from frontend.history import build_batch_row, load_recent_history, make_study_id, save_history_record
 from frontend.image_utils import make_comparison_split, make_overlay, mask_to_rgb
 from frontend.safety import assess_image_quality, build_safety_assessment
@@ -128,6 +129,50 @@ def test_build_batch_row_extracts_queue_fields():
     assert row["Filename"] == "scan.png"
     assert row["Status"] == "Completed"
     assert row["Severity"] == "Mild"
+
+
+def test_feedback_save_and_load_round_trip(tmp_path: Path):
+    attributes = {
+        "Filename": "scan-01.png",
+        "Severity band": "Moderate",
+        "Confidence status": "Review Recommended",
+        "Safety status": "Manual Review Recommended",
+        "Area segmented (%)": 22.5,
+    }
+    save_feedback_record(
+        "study-a",
+        attributes,
+        "Accepted with threshold adjustment",
+        0.45,
+        "Slightly lower threshold gives a cleaner contour.",
+        base_dir=tmp_path,
+    )
+
+    records = load_recent_feedback(limit=1, base_dir=tmp_path)
+
+    assert len(records) == 1
+    assert records[0]["filename"] == "scan-01.png"
+    assert records[0]["review_decision"] == "Accepted with threshold adjustment"
+
+
+def test_build_feedback_record_captures_review_metadata():
+    record = build_feedback_record(
+        "study-a",
+        {
+            "Filename": "scan-02.png",
+            "Severity band": "Mild",
+            "Confidence status": "High Confidence",
+            "Safety status": "Standard Review",
+            "Area segmented (%)": 10.0,
+        },
+        "Accepted",
+        0.5,
+        "Looks consistent with expectations.",
+    )
+
+    assert record["study_id"] == "study-a"
+    assert record["corrected_threshold"] == 0.5
+    assert record["safety_status"] == "Standard Review"
 
 
 def test_assess_image_quality_flags_dark_blurry_images():
