@@ -7,6 +7,14 @@ import streamlit as st
 from frontend.clinical import build_clinical_summary, build_report_text, classify_confidence, classify_severity
 
 
+def image_full_width(image, **kwargs):
+    """Render images across Streamlit versions."""
+    try:
+        st.image(image, use_container_width=True, **kwargs)
+    except TypeError:
+        st.image(image, use_column_width=True, **kwargs)
+
+
 def render_topbar(backend_ok: bool):
     status_color = "#10b981" if backend_ok else "#ef4444"
     status_text = "System Online" if backend_ok else "System Offline"
@@ -346,17 +354,17 @@ def render_results(original_rgb, mask_rgb, overlay, compare_view, mask_resized, 
         c1, c2, c3 = st.columns(3)
         with c1:
             st.caption("Original")
-            st.image(original_rgb, use_container_width=True)
+            image_full_width(original_rgb)
         with c2:
-            st.caption("Predicted Mask")
-            st.image(mask_rgb, use_container_width=True)
+            st.caption("Thresholded Mask")
+            image_full_width(mask_rgb)
         with c3:
             st.caption("Overlay")
-            st.image(overlay, use_container_width=True)
+            image_full_width(overlay)
 
         st.markdown("### Before/After Split View")
         st.caption("Left side: original image | Right side: overlay result")
-        st.image(compare_view, use_container_width=True)
+        image_full_width(compare_view)
 
         st.markdown("### Export")
         report_text = build_report_text(attributes)

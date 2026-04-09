@@ -166,7 +166,9 @@ def process_uploaded_file(uploaded_file, controls):
     severity = classify_severity(area_pct)
     confidence_status, _ = classify_confidence(mean_conf, std_conf)
 
-    mask_rgb = mask_to_rgb(mask_resized, controls["colormap"])
+    # Make threshold changes immediately visible in the displayed mask.
+    display_mask = (mask_resized > controls["threshold"]).astype(np.float32)
+    mask_rgb = mask_to_rgb(display_mask, controls["colormap"])
     tone_map = {
         "Violet": [79, 70, 229],
         "Cyan": [14, 165, 233],
