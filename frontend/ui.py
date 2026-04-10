@@ -362,9 +362,9 @@ def render_results(original_rgb, mask_rgb, overlay, compare_view, mask_resized, 
             st.caption("Overlay")
             image_full_width(overlay)
 
-        st.markdown("### Before/After Split View")
-        st.caption("Left side: original image | Right side: overlay result")
-        image_full_width(compare_view)
+        # st.markdown("### Before/After Split View")
+        # st.caption("Left side: original image | Right side: overlay result")
+        # image_full_width(compare_view)
 
         st.markdown("### Export")
         report_text = build_report_text(attributes)
