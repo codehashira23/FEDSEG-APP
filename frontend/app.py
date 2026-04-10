@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 import sys
 
@@ -146,28 +147,57 @@ def render_upload():
     return uploaded_files
 
 
-def process_uploaded_file(uploaded_file, controls):
-    file_bytes = uploaded_file.read()
+def compute_upload_signature(uploaded_files) -> str:
+    digest = hashlib.sha256()
+    for uploaded_file in uploaded_files:
+        file_bytes = uploaded_file.getvalue()
+        digest.update((uploaded_file.name or "").encode("utf-8"))
+        digest.update(file_bytes)
+    return digest.hexdigest()
+
+
+def process_uploaded_file(uploaded_file, file_bytes, controls):
     decoded = decode_uploaded_image(file_bytes)
     if decoded is None:
         raise ValueError("Could not decode image. Please upload a valid PNG or JPEG file.")
-    quality_assessment = assess_image_quality(decoded)
 
+    quality_assessment = assess_image_quality(decoded)
     original_rgb = cv2.cvtColor(decoded, cv2.COLOR_BGR2RGB)
     h_orig, w_orig = original_rgb.shape[:2]
     filename = uploaded_file.name or "image.png"
-    payload = request_prediction(controls["api_base"].rstrip("/") + PREDICT_PATH, file_bytes)
-    mask = parse_mask_payload(payload)
-    mask_resized = cv2.resize(mask, (w_orig, h_orig), interpolation=cv2.INTER_LINEAR)
 
-    area_pct = 100.0 * (mask_resized > controls["threshold"]).sum() / (mask_resized.size or 1)
-    mean_conf = float(np.mean(mask_resized))
-    std_conf = float(np.std(mask_resized))
+    payload = request_prediction(controls["api_base"].rstrip("/") + PREDICT_PATH, file_bytes)
+    probability_mask = parse_mask_payload(payload)
+    probability_mask = cv2.resize(probability_mask, (w_orig, h_orig), interpolation=cv2.INTER_LINEAR)
+
+    mean_conf = float(np.mean(probability_mask))
+    std_conf = float(np.std(probability_mask))
+    safety_assessment = build_safety_assessment(quality_assessment, mean_conf, std_conf)
+
+    return {
+        "file_bytes": file_bytes,
+        "filename": filename,
+        "original_rgb": original_rgb,
+        "payload": payload,
+        "probability_mask": probability_mask,
+        "safety_assessment": safety_assessment,
+    }
+
+
+def build_display_result(base_result, controls):
+    original_rgb = base_result["original_rgb"]
+    probability_mask = base_result["probability_mask"]
+    payload = base_result["payload"]
+    filename = base_result["filename"]
+    h_orig, w_orig = original_rgb.shape[:2]
+
+    area_pct = 100.0 * (probability_mask > controls["threshold"]).sum() / (probability_mask.size or 1)
+    mean_conf = float(np.mean(probability_mask))
+    std_conf = float(np.std(probability_mask))
     severity = classify_severity(area_pct)
     confidence_status, _ = classify_confidence(mean_conf, std_conf)
 
-    # Make threshold changes immediately visible in the displayed mask.
-    display_mask = (mask_resized > controls["threshold"]).astype(np.float32)
+    display_mask = (probability_mask > controls["threshold"]).astype(np.float32)
     mask_rgb = mask_to_rgb(display_mask, controls["colormap"])
     tone_map = {
         "Violet": [79, 70, 229],
@@ -177,12 +207,13 @@ def process_uploaded_file(uploaded_file, controls):
     }
     overlay = make_overlay(
         original_rgb,
-        mask_resized,
+        probability_mask,
         controls["threshold"],
         alpha=controls["overlay_strength"],
         tint=tone_map[controls["overlay_tone"]],
     )
     compare_view = make_comparison_split(original_rgb, overlay, controls["compare_split"])
+
     attributes = build_attributes(
         filename,
         payload,
@@ -195,20 +226,20 @@ def process_uploaded_file(uploaded_file, controls):
     )
     attributes["Severity band"] = severity
     attributes["Confidence status"] = confidence_status
-    safety_assessment = build_safety_assessment(quality_assessment, mean_conf, std_conf)
-    attributes["Safety status"] = safety_assessment["status"]
-    attributes["Safety reasons"] = "; ".join(safety_assessment["reasons"]) if safety_assessment["reasons"] else "None"
+    attributes["Safety status"] = base_result["safety_assessment"]["status"]
+    attributes["Safety reasons"] = (
+        "; ".join(base_result["safety_assessment"]["reasons"])
+        if base_result["safety_assessment"]["reasons"]
+        else "None"
+    )
 
     return {
-        "file_bytes": file_bytes,
-        "original_rgb": original_rgb,
+        **base_result,
         "mask_rgb": mask_rgb,
         "overlay": overlay,
         "compare_view": compare_view,
-        "mask_resized": mask_resized,
+        "mask_resized": probability_mask,
         "attributes": attributes,
-        "filename": filename,
-        "safety_assessment": safety_assessment,
     }
 
 
@@ -223,7 +254,20 @@ def main():
 
     uploaded_files = render_upload()
     if not uploaded_files:
+        st.session_state.pop("processed_results", None)
+        st.session_state.pop("processed_signature", None)
         render_empty_state()
+        render_model_info()
+        st.stop()
+
+    run_requested = st.button("Run Inference", type="primary", use_container_width=True)
+    upload_signature = compute_upload_signature(uploaded_files)
+    if st.session_state.get("processed_signature") != upload_signature:
+        st.session_state.pop("processed_results", None)
+        st.session_state.pop("processed_signature", None)
+
+    if not run_requested and "processed_results" not in st.session_state:
+        st.info("Files are ready. Click `Run Inference` to generate masks.")
         render_model_info()
         st.stop()
 
@@ -234,39 +278,49 @@ def main():
         unsafe_allow_html=True,
     )
     progress = st.progress(8, text="Preparing request...")
-    processed = []
-    batch_rows = []
 
-    try:
-        with st.spinner("Running segmentation model..."):
-            total_files = len(uploaded_files)
-            for index, uploaded_file in enumerate(uploaded_files, start=1):
-                progress_value = int(10 + ((index - 1) / max(total_files, 1)) * 80)
-                progress.progress(progress_value, text=f"Processing {uploaded_file.name} ({index}/{total_files})...")
-                result = process_uploaded_file(uploaded_file, controls)
-                processed.append(result)
-                study_id = make_study_id(result["file_bytes"])
-                save_history_record(study_id, result["attributes"])
-                batch_rows.append(build_batch_row(result["filename"], result["attributes"]))
-        progress.progress(100, text="Inference complete")
-    except requests.exceptions.RequestException as exc:
-        st.error(f"API error: {exc}")
-        if hasattr(exc, "response") and exc.response is not None:
-            try:
-                st.json(exc.response.json())
-            except Exception:
-                st.code(exc.response.text)
-        st.markdown("</div>", unsafe_allow_html=True)
-        render_model_info()
-        st.stop()
-    except ValueError as exc:
-        st.error(str(exc))
-        st.markdown("</div>", unsafe_allow_html=True)
-        render_model_info()
-        st.stop()
+    if run_requested or "processed_results" not in st.session_state:
+        processed_base = []
+        try:
+            with st.spinner("Running segmentation model..."):
+                total_files = len(uploaded_files)
+                for index, uploaded_file in enumerate(uploaded_files, start=1):
+                    progress_value = int(10 + ((index - 1) / max(total_files, 1)) * 80)
+                    progress.progress(progress_value, text=f"Processing {uploaded_file.name} ({index}/{total_files})...")
+                    file_bytes = uploaded_file.getvalue()
+                    processed_base.append(process_uploaded_file(uploaded_file, file_bytes, controls))
+                progress.progress(100, text="Inference complete")
+            st.session_state["processed_results"] = processed_base
+            st.session_state["processed_signature"] = upload_signature
+        except requests.exceptions.RequestException as exc:
+            st.error(f"API error: {exc}")
+            if hasattr(exc, "response") and exc.response is not None:
+                try:
+                    st.json(exc.response.json())
+                except Exception:
+                    st.code(exc.response.text)
+            st.markdown("</div>", unsafe_allow_html=True)
+            render_model_info()
+            st.stop()
+        except ValueError as exc:
+            st.error(str(exc))
+            st.markdown("</div>", unsafe_allow_html=True)
+            render_model_info()
+            st.stop()
+    else:
+        processed_base = st.session_state["processed_results"]
+        progress.progress(100, text="Using cached inference results")
 
     st.success("Segmentation completed successfully.")
     st.markdown("</div>", unsafe_allow_html=True)
+
+    processed = [build_display_result(item, controls) for item in processed_base]
+    batch_rows = []
+    for result in processed:
+        study_id = make_study_id(result["file_bytes"])
+        save_history_record(study_id, result["attributes"])
+        batch_rows.append(build_batch_row(result["filename"], result["attributes"]))
+
     render_batch_queue(batch_rows)
     primary = processed[0]
     render_safety_panel(primary["safety_assessment"])

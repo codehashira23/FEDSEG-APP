@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import cv2
 import numpy as np
 import pandas as pd
@@ -5,6 +7,9 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from frontend.clinical import build_clinical_summary, build_report_text, classify_confidence, classify_severity
+
+
+LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "logo.png"
 
 
 def image_full_width(image, **kwargs):
@@ -18,28 +23,34 @@ def image_full_width(image, **kwargs):
 def render_topbar(backend_ok: bool):
     status_color = "#10b981" if backend_ok else "#ef4444"
     status_text = "System Online" if backend_ok else "System Offline"
-    st.markdown(
-        f"""
-        <div class="glass topbar">
-            <div style="display:flex; justify-content:space-between; gap:1rem; align-items:center;">
-                <div>
-                    <p class="brand-title">FEDSEG AI Segmentation Console</p>
-                    <p class="brand-sub">Federated ResNet-UNet medical imaging dashboard with real-time inference insights.</p>
-                    <div class="topbar-badges">
-                        <span class="pill">Medical Imaging</span>
-                        <span class="pill">Federated Learning</span>
-                        <span class="pill">Real-time Inference</span>
-                    </div>
-                </div>
-                <div class="status-wrap">
-                    <span class="status-dot" style="background:{status_color};"></span>
-                    <span>{status_text}</span>
-                </div>
+    st.markdown('<div class="topbar topbar-clean">', unsafe_allow_html=True)
+    left_col, right_col = st.columns([6, 2], vertical_alignment="center")
+    with left_col:
+        if LOGO_PATH.exists():
+            st.image(str(LOGO_PATH), width=900)
+        st.markdown(
+            """
+            <p class="brand-title">FEDSEG AI Segmentation Console</p>
+            <p class="brand-sub">Federated ResNet-UNet medical imaging dashboard with real-time inference insights.</p>
+            <div class="topbar-badges">
+                <span class="pill">Medical Imaging</span>
+                <span class="pill">Federated Learning</span>
+                <span class="pill">Real-time Inference</span>
             </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+            """,
+            unsafe_allow_html=True,
+        )
+    with right_col:
+        st.markdown(
+            f"""
+            <div class="status-wrap">
+                <span class="status-dot" style="background:{status_color};"></span>
+                <span>{status_text}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_metric_card(label: str, value: str):
