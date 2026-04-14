@@ -1,10 +1,12 @@
 from pathlib import Path
 
+import base64
 import cv2
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 
 from frontend.clinical import build_clinical_summary, build_report_text, classify_confidence, classify_severity
 
@@ -280,6 +282,18 @@ def build_attributes(filename, payload, width, height, area_pct, mean_conf, std_
     }
 
 
+def _array_to_base64_data_uri(arr, is_mask=False):
+    if is_mask:
+        arr_uint8 = (np.clip(arr, 0, 1) * 255).astype(np.uint8)
+        _, buffer = cv2.imencode('.png', arr_uint8)
+    else:
+        # Assuming original is RGB, convert to BGR for cv2
+        arr_bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+        _, buffer = cv2.imencode('.png', arr_bgr)
+    b64_str = base64.b64encode(buffer).decode("utf-8")
+    return f"data:image/png;base64,{b64_str}"
+
+
 def render_results(original_rgb, mask_rgb, overlay, compare_view, mask_resized, attributes, threshold, show_3d):
     area_pct = attributes["Area segmented (%)"]
     mean_conf = attributes["Mean confidence"]
@@ -356,8 +370,8 @@ def render_results(original_rgb, mask_rgb, overlay, compare_view, mask_resized, 
             unsafe_allow_html=True,
         )
 
-    tab_viz, tab_analytics, tab_table, tab_attrs = st.tabs(
-        ["Visualization", "Analytics", "Attributes Table", "Attribute Details"]
+    tab_viz, tab_3d, tab_analytics, tab_table, tab_attrs = st.tabs(
+        ["Visualization", "3D Topography", "Analytics", "Attributes Table", "Attribute Details"]
     )
 
     with tab_viz:
@@ -428,6 +442,93 @@ def render_results(original_rgb, mask_rgb, overlay, compare_view, mask_resized, 
 
         st.markdown("### Report Preview")
         st.code(report_text, language="text")
+
+    with tab_3d:
+        st.markdown("### Interactive 3D X-Ray Topography")
+        st.caption("Drag to rotate, scroll to zoom. The segmentation mask acts as a displacement map to lift the structure.")
+        
+        orig_uri = _array_to_base64_data_uri(original_rgb, is_mask=False)
+        mask_uri = _array_to_base64_data_uri(mask_resized, is_mask=True)
+        img_aspect = width / height
+        plane_width = 5.0
+        plane_height = 5.0 / img_aspect
+        
+        html_code = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <style>
+                body {{ margin: 0; padding: 0; overflow: hidden; background-color: #f8fafc; border-radius: 8px; }}
+                canvas {{ width: 100%; height: 100%; display: block; }}
+            </style>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+            <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+        </head>
+        <body>
+            <script>
+                const scene = new THREE.Scene();
+                const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+                
+                const renderer = new THREE.WebGLRenderer({{ antialias: true, alpha: true }});
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                renderer.setPixelRatio(window.devicePixelRatio);
+                document.body.appendChild(renderer.domElement);
+                
+                const controls = new THREE.OrbitControls(camera, renderer.domElement);
+                controls.enableDamping = true;
+                controls.dampingFactor = 0.05;
+                controls.maxPolarAngle = Math.PI / 2 - 0.05; 
+                controls.minDistance = 2;
+                controls.maxDistance = 15;
+                
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+                scene.add(ambientLight);
+                
+                const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+                dirLight.position.set(5, 10, 7);
+                scene.add(dirLight);
+                
+                const textureLoader = new THREE.TextureLoader();
+                const colorMap = textureLoader.load("{orig_uri}");
+                const dispMap = textureLoader.load("{mask_uri}");
+                
+                const geometry = new THREE.PlaneGeometry({plane_width}, {plane_height}, 256, 256);
+                
+                const material = new THREE.MeshStandardMaterial({{
+                    map: colorMap,
+                    displacementMap: dispMap,
+                    displacementScale: 1.0,
+                    displacementBias: 0.0,
+                    side: THREE.DoubleSide,
+                    wireframe: false
+                }});
+                
+                const plane = new THREE.Mesh(geometry, material);
+                plane.rotation.x = -Math.PI / 2;
+                scene.add(plane);
+                
+                camera.position.set(0, 3, 5);
+                controls.target.set(0, 0, 0);
+                
+                window.addEventListener('resize', () => {{
+                    camera.aspect = window.innerWidth / window.innerHeight;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize(window.innerWidth, window.innerHeight);
+                }});
+                
+                const animate = function () {{
+                    requestAnimationFrame(animate);
+                    controls.update();
+                    renderer.render(scene, camera);
+                }};
+                
+                animate();
+            </script>
+        </body>
+        </html>
+        """
+        components.html(html_code, height=500)
 
     with tab_analytics:
         st.markdown("### Confidence Analytics")
