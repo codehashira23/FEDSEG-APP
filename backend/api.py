@@ -6,14 +6,27 @@ import cv2
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
 
+from contextlib import asynccontextmanager
+
 from backend.config import settings
 from backend.schemas import HealthResponse, PredictResponse
-from model.infer import predict
+from model.infer import get_model, predict
 from shared.api_contract import HEALTH_PATH, PREDICT_PATH, SUPPORTED_IMAGE_TYPES
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title=settings.app_name, version=settings.app_version)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Lifespan starting: Pre-loading model into memory...")
+    try:
+        get_model()
+        logger.info("Model loaded successfully.")
+    except Exception:
+        logger.exception("Failed to load model during startup.")
+    yield
+    logger.info("Lifespan ending: Cleaning up.")
+
+app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)
 
 
 @app.get(HEALTH_PATH, response_model=HealthResponse)
@@ -63,9 +76,6 @@ async def predict_api(file: UploadFile = File(...)) -> PredictResponse:
     t0 = time.perf_counter()
     try:
         mask = predict(img)
-    except FileNotFoundError as exc:
-        logger.exception("Model checkpoint was not found.")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Unexpected inference failure.")
         raise HTTPException(status_code=500, detail="Inference failed unexpectedly.") from exc

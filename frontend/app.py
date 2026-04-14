@@ -260,13 +260,16 @@ def main():
         render_model_info()
         st.stop()
 
-    run_requested = st.button("Run Inference", type="primary", use_container_width=True)
     upload_signature = compute_upload_signature(uploaded_files)
     if st.session_state.get("processed_signature") != upload_signature:
         st.session_state.pop("processed_results", None)
         st.session_state.pop("processed_signature", None)
+        st.session_state.pop("execute_inference", None)
 
-    if not run_requested and "processed_results" not in st.session_state:
+    if st.button("Run Inference", type="primary", use_container_width=True):
+        st.session_state["execute_inference"] = True
+
+    if not st.session_state.get("execute_inference") and "processed_results" not in st.session_state:
         st.info("Files are ready. Click `Run Inference` to generate masks.")
         render_model_info()
         st.stop()
@@ -279,7 +282,7 @@ def main():
     )
     progress = st.progress(8, text="Preparing request...")
 
-    if run_requested or "processed_results" not in st.session_state:
+    if st.session_state.get("execute_inference") and "processed_results" not in st.session_state:
         processed_base = []
         try:
             with st.spinner("Running segmentation model..."):
@@ -292,7 +295,9 @@ def main():
                 progress.progress(100, text="Inference complete")
             st.session_state["processed_results"] = processed_base
             st.session_state["processed_signature"] = upload_signature
+            st.session_state["execute_inference"] = False
         except requests.exceptions.RequestException as exc:
+            st.session_state["execute_inference"] = False
             st.error(f"API error: {exc}")
             if hasattr(exc, "response") and exc.response is not None:
                 try:
@@ -302,8 +307,9 @@ def main():
             st.markdown("</div>", unsafe_allow_html=True)
             render_model_info()
             st.stop()
-        except ValueError as exc:
-            st.error(str(exc))
+        except Exception as exc:
+            st.session_state["execute_inference"] = False
+            st.error(f"Processing failed: {str(exc)}")
             st.markdown("</div>", unsafe_allow_html=True)
             render_model_info()
             st.stop()

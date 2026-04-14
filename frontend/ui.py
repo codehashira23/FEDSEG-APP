@@ -458,6 +458,7 @@ def render_results(original_rgb, mask_rgb, overlay, compare_view, mask_resized, 
         <html>
         <head>
             <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
             <style>
                 body {{ margin: 0; padding: 0; overflow: hidden; background-color: #f8fafc; border-radius: 8px; }}
                 canvas {{ width: 100%; height: 100%; display: block; }}
