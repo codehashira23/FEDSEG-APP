@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: fedseg-app
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
+    healthCheckPath: /
+    envVars:
+      - key: FEDSEG_APP_NAME
+        value: FEDSEG API
+      - key: FEDSEG_APP_VERSION
+        value: "2.0"
+      - key: FEDSEG_REQUEST_TIMEOUT_SECONDS
+        value: "120"
+      - key: FEDSEG_MAX_UPLOAD_SIZE_BYTES
+        value: "10485760"
+      - key: FEDSEG_MODEL_PATH
+        value: /app/model/model.pt
+      - key: FEDSEG_MODEL_GDRIVE_ID
+        value: "1ao-ewYgWicBOQKCdtWYMsaq8Y-Wj_q2J"

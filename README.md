@@ -108,6 +108,92 @@ streamlit run frontend/app.py
 
 Frontend default URL is shown in the terminal (usually `http://localhost:8501`).
 
+## Render Deployment With Docker
+
+This repository is now prepared for a single-container Render deployment where:
+
+- `FastAPI` runs internally on port `8000`
+- `Streamlit` is exposed publicly on Render's assigned `PORT`
+- the frontend talks to the backend through `http://127.0.0.1:8000`
+
+This is the correct port layout for Render. Only the Streamlit process should bind the public `PORT`.
+
+### Files added for deployment
+
+- `Dockerfile`
+- `docker/start-render.sh`
+- `render.yaml`
+- `.dockerignore`
+
+### Direct model download flow
+
+The startup script now supports downloading the checkpoint during boot.
+
+1. Upload the model file to Google Drive.
+2. Convert the share link:
+
+```text
+https://drive.google.com/file/d/FILE_ID/view
+```
+
+to:
+
+```text
+https://drive.google.com/uc?export=download&id=FILE_ID
+```
+
+3. In Render, set:
+
+```text
+FEDSEG_MODEL_PATH=/app/model/model.pt
+FEDSEG_MODEL_DOWNLOAD_URL=https://drive.google.com/uc?export=download&id=FILE_ID
+```
+
+The container will download the model to `/app/model/model.pt` before starting the API.
+
+### Deploy steps on Render
+
+1. Push this repository to GitHub.
+2. In Render, create a new Blueprint or Web Service from the repo.
+3. Render will detect `render.yaml` and `Dockerfile`.
+4. Set `FEDSEG_MODEL_DOWNLOAD_URL` in Render to the direct download link.
+5. Keep `FEDSEG_MODEL_PATH=/app/model/model.pt`.
+6. Trigger the first deploy and watch the logs for the model download line.
+
+### Local Docker test
+
+Build:
+
+```powershell
+docker build -t fedseg-app .
+```
+
+Run:
+
+```powershell
+docker run --rm -p 10000:10000 -e FEDSEG_MODEL_PATH=/app/model/model.pt -e FEDSEG_MODEL_DOWNLOAD_URL=https://drive.google.com/uc?export=download&id=FILE_ID fedseg-app
+```
+
+Then open:
+
+```text
+http://localhost:10000
+```
+
+### What success looks like
+
+- Container build completes
+- Startup logs show the model download
+- `FastAPI` starts on internal port `8000`
+- `Streamlit` starts on Render's public `PORT`
+- the site opens and inference works
+
+### Warnings
+
+- Google Drive may throttle large files
+- cold starts will be slower because the model downloads at boot
+- if the model is very large, object storage such as `S3` is a better long-term option
+
 ## API Reference
 
 ### `GET /health`
@@ -167,7 +253,7 @@ Default backend URL is `http://localhost:8000`.
   Ensure `uvicorn` is running and API URL matches backend host/port.
 
 - **Model not found error**  
-  Confirm `model/fedseg_model.pt` exists and is readable.
+  Confirm `FEDSEG_MODEL_PATH` is correct and the download URL is valid.
 
 - **Image decode error**  
   Upload a valid PNG/JPEG image file.

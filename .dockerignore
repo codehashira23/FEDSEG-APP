@@ -1,0 +1,18 @@
+.git
+.gitignore
+.pytest_cache
+.streamlit/secrets.toml
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.tmp
+*.temp
+htmlcov
+outputs
+uploads
+*.ipynb
+FEDERATED LEARNING IP.pdf
+fss_improvements.pdf
