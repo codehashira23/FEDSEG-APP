@@ -18,4 +18,4 @@ services:
       - key: FEDSEG_MODEL_PATH
         value: /app/model/model.pt
       - key: FEDSEG_MODEL_GDRIVE_ID
-        value: "1ao-ewYgWicBOQKCdtWYMsaq8Y-Wj_q2J"
+        value: "1_sRlpY5INh5DgeWlbUvKbOREOxE8s4lz"

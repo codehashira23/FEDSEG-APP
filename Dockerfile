@@ -21,7 +21,7 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # Download model at build-time to embed inside the Docker image layer securely
 # This completely eliminates 'download-on-boot' problems in Render free tier
-RUN mkdir -p /app/model && gdown --id 1ao-ewYgWicBOQKCdtWYMsaq8Y-Wj_q2J -O /app/model/model.pt
+RUN mkdir -p /app/model && gdown --id 1_sRlpY5INh5DgeWlbUvKbOREOxE8s4lz -O /app/model/model.pt
 
 COPY . .
 
